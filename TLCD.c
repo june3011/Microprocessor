@@ -1,110 +1,126 @@
-/*
- * EX_TLCD.c
+﻿/*
+ * tlcd.c
  *
- * Created: 2022-05-31 오후 2:27:36
- * Author : user
+ * Created: 2021-11-05 오전 8:25:22
+ *  Author: anece
  */ 
 
 #include "tlcd.h"
-#include <avr/io.h>
-#include <util/delay.h>		// delay 함수 사용을 위한 헤더파일
-#include <avr/interrupt.h>	// RX 수신 처리 인터럽트
-#include <string.h>			// strcpy
 
-#define BAUD_RATE 51		// Atmega128 데이터 시트 51 (192000bps) 값
-
-
-volatile unsigned char rxData;		// 송수신 데이터 저장 변수
-
-
-void USART_Init();
-void USART_Transmitter(unsigned char txData);
-
-int count = 0x00;
-
-int main(void)
+//- TXT LCD 초기화 함수 구현 -----------------------------------------------------
+void TXT_LCD_Init(void)
 {
-    
-	TXT_LCD_Init();									// LCD 제어 설정 및 초기화
+	//------ (1) TXT_LCD_Init 제어 Port 설정 및 초기화
+	//- TXT_LCD 제어 Pin Output 설정 및 초기화
+	TLCD_DDR  = ALL_SET;
+	TLCD_PORT = ALL_CLEAR;
 	
-	USART_Init();						// USART1 초기화
+	_delay_us(50000);
+
+	//------ (2) TXT LCD 인터페이스 설정
+	Set4BitMode();
 	
-	sei();								// 글로벌 인터럽트를 활성화
+	//------ (3) TXT LCD 출력을 위한 설정
+	//- LCD의 행, 열 , 글자 크기 설정
+	SendCommand(CMD_FUNCTION_SET);
+	_delay_us(2000);
 	
-	USART_Transmitter('S');
+	//- 디스플레이, 커서, 문자 깜빡임 On/Off 설정
+	SendCommand(CMD_DISPLAY_CONTROL);
+	_delay_us(2000);
 	
-    while (1) 
-    {
-    }
+	//- 커서 이동 방향, 문자 디스플레이 이동 여부 설정
+	SendCommand(CMD_ENTRYMODE_SET);
+	_delay_us(2000);
+	
+	//- LCD 화면 지우고 커서는 1행 1열 위치, DDRAM AC=0
+	SendCommand(CMD_CLEAR_DISPLAY);
+	_delay_us(2000);
 }
 
-// USART 초기화 함수
-void USART_Init()
+
+//- TXT_LCD 4bit 인터페이스 설정 구현 ---------------------------------------------
+void Set4BitMode(void)
 {
-	UBRR1H = (unsigned char) BAUD_RATE >> 8;	// 전송 속도 설정
-	UBRR1L = (unsigned char) BAUD_RATE;
+	//- Command 전송을 위한 RS=0, RW=0, EN=0
+	TLCD_PORT &= ~((1<<RS_BIT)|(1<<RW_BIT)|(1<<EN_BIT));
+
+	TXT_LCD_Write(CMD_8BIT_MODE);
+	_delay_us(4500);
+
+	TXT_LCD_Write(CMD_8BIT_MODE);
+	_delay_us(4500);
 	
-	/*UCSR1B = (1<<TXEN1);					// 송신 기능 설정*/
-	UCSR1B = (1<<TXEN1) | (1<<RXEN1) | (1<<RXCIE1);		// 송신, 수신, 수신인터럽트 기능 설정
-	UCSR1C = (1<<UCSZ11) | (1<<UCSZ10);		//  No parity, 1 Stop Bit, 8 bit Data
+	TXT_LCD_Write(CMD_8BIT_MODE);
+	_delay_us(150);
+	
+	TXT_LCD_Write(CMD_4BIT_MODE);
 }
 
-// USART Transmitter 함수
-void USART_Transmitter(unsigned char txData){
-	while(!(UCSR1A & (1<<UDRE1)));
-	UDR1 = txData;
-}
 
-// USART Interrupt 함수
-ISR(USART1_RX_vect)
+//- LCD 문자열 출력 함수 구현 ------------------------------------------------------------------------
+void SendText(unsigned char addrCommand, char *szText)
 {
-	// 수신 버퍼에서 읽어 온 데이터를 다시 송신
-	if (UCSR1A & (1<<RXC1))
+	SendCommand(addrCommand);   //- DD Ram 주소 전달
+
+	//- Data 전달
+	while(*szText != '\0')
 	{
-		rxData = UDR1;					// 수신 버퍼 데이터를 변수에 저장
-		USART_Transmitter(rxData);		// PC로 전송해서 확인
-		
-		int n = 0;
-		
-		//if (rxData != '\n'){
-				//SendData(rxData);
-			//if (SendCommand(DDRAM_FE_ADDR)){
-				//SendCommand(DDRAM_SS_ADDR);
-				//SendData(rxData);
-			//}
-		//}
-		
-		
-		
-		if (rxData != '\n'){
-			if (count == 0x10){
-				count = 0x40;
-			}
-			//if (count == 0x50){
-				//SendCommand(CMD_CLEAR_DISPLAY);
-				//SendCommand(DDRAM_ADDR | 0x00);
-				//count = -0x01;
-			//}
-			if (count == 0x50){
-				count = 0x00;
-				SendCommand(CMD_CLEAR_DISPLAY);
-				SendCommand(DDRAM_ADDR | count);
-				_delay_ms(2000);
-				SendData(rxData);
-				count++;
-				return;
-			}
-			SendCommand(DDRAM_ADDR | count++);
-			SendData(rxData);
-		}
-		
-		
-		
-		
-		n++;
-		
-		//SendText(DDRAM_ADDR | 0x00, "hihihhi");			// 1행에 문자 출력
-		//SendText(DDRAM_ADDR | 0x40, "hihi");				// 2행에 문자 출력	
-		
+		SendData(*szText);
+		szText++;
 	}
+}
+
+
+//- RBG_LCD 명령어 전달 함수 구현 ------------------------------------------------------------------------
+void SendCommand(unsigned char command)
+{
+	//- Command 전송을 위한  RS=0, RW=0, EN=0
+	TLCD_PORT  &= ~( (1<<RS_BIT)|(1<<RW_BIT)|(1<<EN_BIT));
+
+	//- Data Bus에 CMD 쓰기
+	TXT_LCD_Write(command>>4);
+	TXT_LCD_Write(command);
+}
+
+
+//- RBG_LCD 데이터 전달 함수 구현 ------------------------------------------------------------------------
+void SendData(unsigned char data)
+{
+	//- Data 전송을 위한  RS=1, RW=0, EN=0
+	TLCD_PORT  |=   (1<<RS_BIT);
+	TLCD_PORT  &= ~((1<<RW_BIT) | (1<<EN_BIT));
+
+	TXT_LCD_Write(data>>4);
+	TXT_LCD_Write(data);
+}
+
+
+//- LCD 명령어/데이터 레지스터 기록 구현 ---------------------------------------------------------------
+void TXT_LCD_Write(unsigned char nValue)
+{
+	int nTmp  =  0;
+	TLCD_PORT &= ~((1<<DATA_D4)|(1<<DATA_D5)|(1<<DATA_D6)|(1<<DATA_D7));
+
+	for (int nIdx = 0; nIdx < 4; nIdx++)
+	{
+		nTmp = (nValue>>nIdx) & 0x01;
+		TLCD_PORT |=  ( nTmp << (DATA_D4+nIdx) );
+	}
+	TXT_LCD_Enable();
+}
+
+
+
+//- LCD 모듈 활성/비활성 구현 ------------------------------------------------------------------------
+void TXT_LCD_Enable(void)
+{
+	TLCD_PORT &=  ~(1<<EN_BIT);   //- LOW - Disable
+	_delay_us(1);
+	
+	TLCD_PORT |=  (1<<EN_BIT);	  //- HIGH - Enable
+	_delay_us(1);
+
+	TLCD_PORT &=  ~(1<<EN_BIT);    //- LOW - Disable
+	_delay_us(100);
 }
