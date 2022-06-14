@@ -10,80 +10,19 @@
 #include <avr/io.h>
 #include <util/delay.h>
 #include <avr/interrupt.h>
+#include <string.h>
 
 #define LED_DDR DDRE
 #define LED_PORT PORTE
-#define BUZZ_DDR DDRD0
-#define BUZZ_PORT PORTD0
+#define BUZZ_DDR DDRD
+#define BUZZ_PORT PORTD
 
 #define BAUD_RATE 51
 
 // USART 제어를 위한 전역 변수 선언
 volatile unsigned char rxData;		// 송수신 데이터 저장 변수
 
-
-
-void USART_Init();
-void USART_Transmitter(unsigned char txData);
-
-
-
-int main(void)
-{
-    /* Replace with your application code */
-	LED_DDR = 0xff;
-	
-	USART_Init();
-	
-	sei();		// 글로벌 인터럽트를 활성화
-	
-	USART_Transmitter();
-	
-    while (1) 
-    {
-		
-    }
-}
-
-
-// USART Interrupt 함수
-ISR(USART1_RX_vect)
-{
-	// 수신 버퍼에서 읽어 온 데이터를 다시 송신
-	if (UCSR1A & (1<<RXC1))		// 읽지 않은 데이터가 있다면
-	{
-		int temp = 0x00;
-		rxData = UDR1;					// 수신 버퍼 데이터를 변수에 저장
-		USART_Transmitter(rxData);		// PC로 전송해서 확인
-		
-		if (rxData[0] == 'L'){
-			if (rxData[2] == '1'){
-				for (int i=0; i<rxData[1]-'0'; i++){
-					if (i == 0){
-						LED_PORT == 0x00;
-					}
-					LED_PORT <<= 1;
-					LED_PORT |= 1;
-				}
-			} else if (rxData[2] == '0'){
-				temp = 0x00;
-				for (int i=0; i<rxData[1]-'0'; i++){
-					LED_PORT = temp << i;
-				}
-			}
-		} else if(rxData[0] == 'B'){
-			if (rxData[1] == '1'){
-				BUZZ_PORT = 0;
-			}
-			else if(rxData[1] == '0'){
-				BUZZ_PORT = 1;
-			}
-		} else {
-			;
-		}
-		
-	}
-}
+char flag=0;
 
 
 // USART 초기화 함수
@@ -102,3 +41,71 @@ void USART_Transmitter(unsigned char txData){
 	while(!(UCSR1A & (1<<UDRE1)));
 	UDR1 = txData;
 }
+
+
+
+
+int main(void)
+{
+    /* Replace with your application code */
+	LED_DDR = 0xff;
+	BUZZ_DDR = 0xff;
+	
+	LED_PORT = 0x00;
+	BUZZ_PORT = 0xff;
+	
+	char command[5];
+	int cnt;
+	cnt = 0;
+	
+	USART_Init();
+	
+	sei();		// 글로벌 인터럽트를 활성화
+	
+	USART_Transmitter('t');
+	
+    while (1) 
+    {
+		if(flag == 1){
+			flag = 0;
+			if (rxData != '\n'){
+				command[cnt++] = rxData;
+				} else {
+				if (command[0] == 'L'){
+					if (command[2] == '1'){
+						LED_PORT |= (0x01 << (command[1]-'0'));
+					}
+					else if (command[2] == '0'){
+						LED_PORT ^= (0x01 << (command[1]-'0'));
+					}
+				}
+				else if (command[0] == 'B'){
+					if (command[1] == '1'){
+						BUZZ_PORT = 0x00;
+					}
+					else if (command[1] == '0'){
+						BUZZ_PORT = 0xff;
+					}
+				}
+				cnt = 0;
+			}
+		}
+    }
+}
+
+
+
+// USART Interrupt 함수
+ISR(USART1_RX_vect)
+{
+	// 수신 버퍼에서 읽어 온 데이터를 다시 송신
+	if (UCSR1A & (1<<RXC1))		// 읽지 않은 데이터가 있다면
+	{
+		rxData = UDR1;					// 수신 버퍼 데이터를 변수에 저장
+		USART_Transmitter(rxData);		// PC로 전송해서 확인
+		
+		flag = 1;
+	}
+}
+
+
